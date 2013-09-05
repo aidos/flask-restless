@@ -11,6 +11,7 @@
 import datetime
 import inspect
 import uuid
+from collections import defaultdict
 
 from dateutil.parser import parse as parse_datetime
 from sqlalchemy import Date
@@ -248,7 +249,6 @@ def is_mapped_class(cls):
 # This code was adapted from :meth:`elixir.entity.Entity.to_dict` and
 # http://stackoverflow.com/q/1958219/108197.
 def to_dict(instance, deep=None, exclude=None, include=None,
-            exclude_relations=None, include_relations=None,
             include_methods=None):
     """Returns a dictionary representing the fields of the specified `instance`
     of a SQLAlchemy model.
@@ -280,17 +280,11 @@ def to_dict(instance, deep=None, exclude=None, include=None,
        ``None``, then the returned dictionary will include all columns not
        excluded by `exclude`.
 
-    `include_relations` is a dictionary mapping strings representing relation
-    fields on the specified `instance` to a list of strings representing the
-    names of fields on the related model which should be included in the
-    returned dictionary; `exclude_relations` is similar.
-
     `include_methods` is a list mapping strings to method names which will
     be called and their return values added to the returned dictionary.
 
     """
-    if (exclude is not None or exclude_relations is not None) and \
-            (include is not None or include_relations is not None):
+    if exclude is not None and include is not None:
         raise ValueError('Cannot specify both include and exclude.')
     # create a list of names of columns, including hybrid properties
     try:
@@ -325,6 +319,12 @@ def to_dict(instance, deep=None, exclude=None, include=None,
             result[key] = str(value)
         elif is_mapped_class(type(value)):
             result[key] = to_dict(value)
+
+    # given to us as lists of strings so we split by relation
+    include_relations = deep_indexed(include)
+    exclude_relations = deep_indexed(exclude)
+    include_relations_methods = deep_indexed(include_methods)
+
     # recursively call _to_dict on each of the `deep` relations
     deep = deep or {}
     for relation, rdeep in deep.iteritems():
@@ -335,19 +335,13 @@ def to_dict(instance, deep=None, exclude=None, include=None,
         if relatedvalue is None:
             result[relation] = None
             continue
-        # Determine the included and excluded fields for the related model.
-        newexclude = None
-        newinclude = None
-        if exclude_relations is not None and relation in exclude_relations:
-            newexclude = exclude_relations[relation]
-        elif (include_relations is not None and
-              relation in include_relations):
-            newinclude = include_relations[relation]
-        # Determine the included methods for the related model.
-        newmethods = None
-        if include_methods is not None:
-            newmethods = [method.split('.', 1)[1] for method in include_methods
-                        if method.split('.', 1)[0] == relation]
+
+        # Determine the included, excluded and method fields for the
+        # related model.
+        newinclude = include_relations.get(relation)
+        newexclude = exclude_relations.get(relation)
+        newmethods = include_relations_methods.get(relation)
+
         if is_like_list(instance, relation):
             result[relation] = [to_dict(inst, rdeep, exclude=newexclude,
                                         include=newinclude,
@@ -362,6 +356,28 @@ def to_dict(instance, deep=None, exclude=None, include=None,
                                    include=newinclude,
                                    include_methods=newmethods)
     return result
+
+
+def deep_indexed(to_index):
+    """Split up a list into sublists by dotted prefix (just one level).
+
+    `to_index` is the list to be indexed in the form
+    ['relation.field_or_name', 'drawings.id', 'drawings.name', ...]
+
+    The return value is a dictionary mapping ``'relation'`` to the sublist
+    """
+
+    if to_index is None:
+        return dict()
+
+    d = defaultdict(list)
+    for t in to_index:
+        if '.' in t:
+            segs = t.split('.')
+            relation, rest = segs[0], '.'.join(segs[1:])
+            d[relation].append(rest)
+
+    return dict(d)
 
 
 def evaluate_functions(session, model, functions):
