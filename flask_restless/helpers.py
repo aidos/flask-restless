@@ -11,7 +11,8 @@
 import datetime
 import inspect
 import uuid
-from collections import defaultdict
+import collections
+import copy
 
 from dateutil.parser import parse as parse_datetime
 from sqlalchemy import Date
@@ -370,7 +371,7 @@ def deep_indexed(to_index):
     if to_index is None:
         return dict()
 
-    d = defaultdict(list)
+    d = collections.defaultdict(list)
     for t in to_index:
         if '.' in t:
             segs = t.split('.')
@@ -491,6 +492,8 @@ def get_or_create(session, model, attrs):
     # attribute on the remote model.
     if not isinstance(attrs, dict):
         return attrs
+    # don't want this operation to be destructive
+    attrs = copy.copy(attrs)
     # Recurse into nested relationships
     for rel in get_relations(model):
         if rel not in attrs:
